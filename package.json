@@ -1,0 +1,88 @@
+{
+  "name": "ops-code",
+  "displayName": "ops-code",
+  "description": "Run openseespy models in vs-code",
+  "version": "0.1.0",
+  "publisher": "ops-code",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/igor-barcelos/ops-code"
+  },
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Visualization"
+  ],
+  "activationEvents": [
+    "onCommand:ops-code.run",
+    "onCommand:ops-code.screenshot"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "ops-code.run",
+        "title": "Run in ops-code"
+      },
+      {
+        "command": "ops-code.screenshot",
+        "title": "ops-code: Save Screenshot"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "ops-code.screenshot",
+        "key": "ctrl+s",
+        "when": "activeWebviewPanelId == openSeesViewer"
+      }
+    ],
+    "menus": {
+      "explorer/context": [
+        {
+          "command": "ops-code.run",
+          "when": "resourceExtname == .py"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "ops-code.run",
+          "when": "resourceExtname == .py"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "ops-code",
+      "properties": {
+        "ops-code.pythonPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to Python interpreter. Leave blank to auto-detect."
+        },
+        "ops-code.autoRenderOnSave": {
+          "type": "boolean",
+          "default": true,
+          "description": "Re-render the model automatically when the file is saved."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "node esbuild.js",
+    "watch": "node esbuild.js --watch",
+    "package": "vsce package",
+    "bundle": "npm run build && npm run package"
+  },
+  "dependencies": {
+    "three": "^0.162.0",
+    "three-viewport-gizmo": "^2.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/three": "^0.183.1",
+    "@types/vscode": "^1.80.0",
+    "esbuild": "^0.19.0",
+    "typescript": "^5.0.0"
+  }
+}

@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'none'; script-src 'nonce-NONCE_PLACEHOLDER'; style-src 'unsafe-inline';">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OpenSees Viewer</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #1a1a2e; color: #e0e0e0; font-family: sans-serif; overflow: hidden; }
+    #canvas { display: block; width: 100vw; height: 100vh; }
+
+    #toolbar {
+      position: absolute; top: 8px; left: 8px; z-index: 10;
+      display: flex; gap: 6px; align-items: center; flex-wrap: wrap;
+    }
+    button {
+      background: #2a2a3e; color: #e0e0e0; border: 1px solid #444466;
+      padding: 4px 12px; cursor: pointer; border-radius: 3px; font-size: 12px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+    }
+    button:hover { background: #3a3a52; }
+    select {
+      background: #2a2a3e; color: #e0e0e0; border: 1px solid #444466;
+      padding: 4px 6px; border-radius: 3px; font-size: 12px; cursor: pointer;
+    }
+    #status { font-size: 12px; color: #999999; margin-left: 4px; }
+    #force-selector { display: none; }
+
+    #colorbar {
+      display: none;
+      position: absolute; right: 16px; top: 50%; transform: translateY(-50%); z-index: 10;
+      background: rgba(30,30,50,0.85); border: 1px solid #444466; border-radius: 4px;
+      padding: 8px; font-size: 11px; color: #e0e0e0;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.4);
+      text-align: center;
+    }
+    #colorbar canvas { display: block; width: 12px; height: 160px; margin: 4px auto; }
+    .colorbar-label { text-align: center; }
+
+    #error-banner {
+      display: none;
+      position: absolute; top: 8px; left: 8px; right: 8px; z-index: 20;
+      background: #3a1a1a; color: #ff6666; border: 1px solid #cc0000;
+      padding: 8px 12px; border-radius: 4px; font-size: 12px;
+      white-space: pre-wrap; word-break: break-all;
+    }
+
+    #results-panel {
+      display: none;
+      position: absolute; bottom: 0; left: 0; right: 0; z-index: 10;
+      background: #1e1e32; border-top: 1px solid #444466; color: #e0e0e0;
+      max-height: 35vh; font-size: 11px; font-family: monospace;
+    }
+    #results-header {
+      display: flex; gap: 4px; align-items: center;
+      padding: 4px 8px; border-bottom: 1px solid #333355; background: #252540;
+    }
+    #results-header button { font-size: 11px; padding: 2px 8px; }
+    .tab-btn.active { background: #444466; font-weight: bold; }
+    #results-search {
+      padding: 4px 8px; border-bottom: 1px solid #333355; background: #252540;
+    }
+    #results-filter {
+      width: 100%; background: #1a1a2e; color: #e0e0e0; border: 1px solid #444466;
+      padding: 3px 6px; border-radius: 3px; font-size: 11px; font-family: monospace;
+      outline: none;
+    }
+    #results-filter:focus { border-color: #6666aa; }
+    #results-body {
+      overflow-y: auto; max-height: calc(35vh - 60px);
+    }
+    #results-table {
+      width: 100%; border-collapse: collapse;
+    }
+    #results-table th {
+      position: sticky; top: 0; background: #252540;
+      padding: 3px 8px; text-align: right; border-bottom: 1px solid #444466;
+      font-weight: 600;
+    }
+    #results-table td {
+      padding: 3px 8px; text-align: right; border-bottom: 1px solid #2a2a44;
+    }
+    #results-table tr:nth-child(even) td { background: #222238; }
+    #results-table tr:hover td { background: #333355; }
+    #results-table tr.selected td { background: #3a3a66; }
+    #results-table tr[data-type="element"] { cursor: pointer; }
+
+    #diagram-panel {
+      display: none;
+      position: absolute; right: 60px; top: 50%; transform: translateY(-50%); z-index: 10;
+      background: rgba(30,30,50,0.92); border: 1px solid #444466; border-radius: 4px;
+      padding: 8px; font-size: 11px; color: #e0e0e0; width: 350px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.5);
+    }
+    #diagram-header {
+      display: flex; justify-content: space-between; align-items: center;
+      margin-bottom: 4px;
+    }
+    #diagram-header button {
+      background: none; border: none; color: #999; font-size: 16px;
+      cursor: pointer; padding: 0 4px;
+    }
+    #diagram-header button:hover { color: #fff; }
+    #diagram-canvas { display: block; width: 100%; }
+  </style>
+</head>
+<body>
+  <div id="toolbar">
+    <button id="run-btn">&#9654; Run Analysis</button>
+    <button id="screenshot-btn" title="Save screenshot">&#128247; Screenshot</button>
+    <select id="labels-select">
+      <option value="">Labels: Hide</option>
+      <option value="nodes">Labels: Nodes</option>
+      <option value="members">Labels: Members</option>
+      <option value="loads">Labels: Loads</option>
+    </select>
+    <div id="force-selector">
+      <select id="force-select"></select>
+    </div>
+    <span id="status">Waiting...</span>
+  </div>
+
+  <div id="colorbar">
+    <div id="colorbar-title">Axial Force</div>
+    <span id="colorbar-max" class="colorbar-label">0</span>
+    <canvas id="colorbar-canvas" width="12" height="160"></canvas>
+    <span id="colorbar-min" class="colorbar-label">0</span>
+  </div>
+
+  <div id="results-panel">
+    <div id="results-header">
+      <button id="results-toggle">Results &#9660;</button>
+      <button class="tab-btn active" data-tab="nodes">Nodes</button>
+      <button class="tab-btn" data-tab="elements">Elements</button>
+    </div>
+    <div id="results-search">
+      <input id="results-filter" type="text" placeholder="Filter...">
+    </div>
+    <div id="results-body">
+      <table id="results-table">
+        <thead id="results-thead"></thead>
+        <tbody id="results-tbody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div id="diagram-panel">
+    <div id="diagram-header">
+      <span id="diagram-title">Element</span>
+      <button id="diagram-close">&times;</button>
+    </div>
+    <canvas id="diagram-canvas"></canvas>
+  </div>
+
+  <div id="error-banner"></div>
+  <canvas id="canvas"></canvas>
+  <script nonce="NONCE_PLACEHOLDER" src="VIEWER_JS_URI"></script>
+</body>
+</html>
