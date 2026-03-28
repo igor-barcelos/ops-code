@@ -12,7 +12,7 @@ Run OpenSeesPy structural models directly in VS Code with instant 3D visualizati
 
 ## Demo
 
-![ops-code demo](assets/demo_2.gif)
+![ops-code demo](assets/demo_3.gif)
 
 ## Quick Start
 
