@@ -3,7 +3,7 @@
   "displayName": "ops-code",
   "description": "Run openseespy models in vs-code",
   "version": "0.0.0",
-  "publisher": "ops-code",
+  "publisher": "igor-barcelos",
   "license": "MIT",
   "icon": "assets/logo.png",
   "galleryBanner": {

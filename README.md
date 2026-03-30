@@ -6,6 +6,16 @@
 
 Run OpenSeesPy structural models directly in VS Code with instant 3D visualization and interactive analysis results.
 
+![ops-code demo](assets/demo_3.gif)
+
+## Quick Start
+
+1. **Install** the extension from the VS Code Marketplace
+2. **Select** openseespy model file
+3. **Right-click** → "Run in ops-code"
+4. View your 3D model in the viewer panel
+5. Click **Run Analysis** in the viewer to execute the model.
+
 ## Features
 
 - **3D Visualization** — Real-time rendering of OpenSees models: nodes, elements, supports, and nodal loads
@@ -13,17 +23,6 @@ Run OpenSeesPy structural models directly in VS Code with instant 3D visualizati
 - **Force Visualization** — Color-mapped elements by internal forces (N, V, M, T, My, Mz) with interactive rainbow colorbar
 - **Code-Driven UI** — Control viewer appearance via Python: color sections, set precision, no UI panels needed
 - **Auto-Reload** — Model updates automatically when you save your script
-
-## Demo
-
-![ops-code demo](assets/demo_3.gif)
-
-## Quick Start
-
-1. **Install** the extension from the VS Code Marketplace
-2. **Open** a `.py` file with OpenSeesPy commands
-3. **Right-click** → "Run in ops-code"
-4. View your 3D model, run analysis, explore results
 
 ### Example
 
