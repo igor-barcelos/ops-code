@@ -43,10 +43,17 @@ export interface ElementResult {
     section_forces: SectionForces;
 }
 
+export interface CustomElemResult {
+    id: string;
+    name: string;
+    values: Record<number, number[]>;
+}
+
 export interface AnalysisData {
     converged: boolean;
     node_results: NodeResult[];
     element_results: ElementResult[];
+    ops_elem_results?: CustomElemResult[];
 }
 
 export interface Section {
@@ -55,9 +62,26 @@ export interface Section {
     label?: string;
 }
 
+export interface NodalLoads {
+    scale?: number;
+    color?: string;
+}
+
+export interface Supports {
+    scale?: number;
+    color?: string;
+}
+
+export interface Label {
+    size?: number;
+}
+
 export interface Viewer {
     sections?: Section[];
     precision?: number;
+    nodalLoads?: NodalLoads;
+    supports?: Supports;
+    label?: Label;
 }
 
 export interface ModelData {

@@ -74,6 +74,22 @@ def run(script_path: str) -> dict[str, Any]:
 
     error: str | None = None
     converged: bool = False
+    ops_elem_results: list[dict[str, Any]] = []
+
+    def ops_elem_result(name: str, values: dict[int, float | list[float]]) -> None:
+        """Register a custom element result for visualization."""
+        wrapped_values: dict[int, list[float]] = {}
+        for tag, val in values.items():
+            if isinstance(val, (int, float)):
+                wrapped_values[int(tag)] = [float(val)]
+            elif isinstance(val, list):
+                wrapped_values[int(tag)] = [float(v) for v in val]
+
+        ops_elem_results.append({
+            "id": f"custom_{len(ops_elem_results)}",
+            "name": name,
+            "values": wrapped_values,
+        })
 
     old_stdout = sys.stdout
     sys.stdout = io.StringIO()
@@ -81,7 +97,12 @@ def run(script_path: str) -> dict[str, Any]:
         filepath = os.path.abspath(script_path)
         with open(filepath, 'r', encoding='utf-8') as f:
             code = f.read()
-        exec(compile(code, filepath, 'exec'), {'__name__': '__main__', '__file__': filepath})
+        namespace = {
+            '__name__': '__main__',
+            '__file__': filepath,
+            'ops_elem_result': ops_elem_result,
+        }
+        exec(compile(code, filepath, 'exec'), namespace)
         converged = True
     except Exception as exc:
         error = str(exc)
@@ -146,6 +167,7 @@ def run(script_path: str) -> dict[str, Any]:
             "converged": converged,
             "node_results": node_results,
             "element_results": element_results,
+            "ops_elem_results": ops_elem_results if ops_elem_results else None,
         },
     }
 

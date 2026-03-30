@@ -24,10 +24,17 @@ interface SectionForces {
 }
 interface ElementResult { tag: number; local_forces: number[]; section_forces: SectionForces; }
 
+interface CustomElemResult {
+    id: string;
+    name: string;
+    values: Record<number, number[]>;
+}
+
 interface AnalysisData {
     converged: boolean;
     node_results: NodeResult[];
     element_results: ElementResult[];
+    ops_elem_results?: CustomElemResult[];
 }
 
 interface Section {
@@ -36,9 +43,16 @@ interface Section {
     label?: string;
 }
 
+interface NodalLoads { scale?: number; color?: string; }
+interface Supports   { scale?: number; color?: string; }
+interface Label      { size?: number; }
+
 interface Viewer {
     sections?: Section[];
     precision?: number;
+    nodalLoads?: NodalLoads;
+    supports?: Supports;
+    label?: Label;
 }
 
 interface ModelData {
@@ -69,18 +83,18 @@ interface ForceComponent { label: string; key: keyof SectionForces; }
 function forceComponents(ndf: number): ForceComponent[] {
     if (ndf <= 3) {
         return [
-            { label: 'Axial (N)',   key: 'N' },
-            { label: 'Shear (V)',   key: 'V' },
-            { label: 'Moment (M)',  key: 'M' },
+            { label: 'Axial',    key: 'N' },
+            { label: 'Shear',    key: 'V' },
+            { label: 'Moment',   key: 'M' },
         ];
     }
     return [
-        { label: 'Axial (N)',   key: 'N' },
-        { label: 'Shear Y',    key: 'V' },
-        { label: 'Shear Z',    key: 'Vz' },
-        { label: 'Moment X',   key: 'T' },
-        { label: 'Moment Y',   key: 'My' },
-        { label: 'Moment Z',   key: 'Mz' },
+        { label: 'Axial',     key: 'N' },
+        { label: 'Shear Y',   key: 'V' },
+        { label: 'Shear Z',   key: 'Vz' },
+        { label: 'Torsion',   key: 'T' },
+        { label: 'Moment Y',  key: 'My' },
+        { label: 'Moment Z',  key: 'Mz' },
     ];
 }
 
@@ -164,13 +178,13 @@ const colorbarCanvas = document.getElementById('colorbar-canvas') as HTMLCanvasE
 const colorbarTitle  = document.getElementById('colorbar-title') as HTMLDivElement;
 const colorbarMin    = document.getElementById('colorbar-min') as HTMLSpanElement;
 const colorbarMax    = document.getElementById('colorbar-max') as HTMLSpanElement;
-const resultsPanel   = document.getElementById('results-panel') as HTMLDivElement;
-const resultsToggle  = document.getElementById('results-toggle') as HTMLButtonElement;
-const resultsBody    = document.getElementById('results-body') as HTMLDivElement;
-const resultsThead   = document.getElementById('results-thead') as HTMLTableSectionElement;
-const resultsTbody   = document.getElementById('results-tbody') as HTMLTableSectionElement;
-const resultsFilter  = document.getElementById('results-filter') as HTMLInputElement;
-const tabBtns        = resultsPanel.querySelectorAll<HTMLButtonElement>('.tab-btn');
+const modelPanel       = document.getElementById('model-panel') as HTMLDivElement;
+const modelCollapseBtn = document.getElementById('model-collapse-btn') as HTMLButtonElement;
+const panelOpenBtn     = document.getElementById('panel-open-btn') as HTMLButtonElement;
+const modelThead       = document.getElementById('model-thead') as HTMLTableSectionElement;
+const modelTbody       = document.getElementById('model-tbody') as HTMLTableSectionElement;
+const modelFilter      = document.getElementById('model-filter') as HTMLInputElement;
+const tabBtns          = modelPanel.querySelectorAll<HTMLButtonElement>('.tab-btn');
 let currentTab: 'nodes' | 'elements' = 'nodes';
 
 runBtn.addEventListener('click', () => vscodeApi.postMessage({ type: 'runAnalysis' }));
@@ -191,33 +205,47 @@ forceSelect.addEventListener('change', () => {
     if (forceSelect.value === '') {
         restoreDefaultColors(lastElements, lastNodeMap);
     } else if (lastAnalysis) {
-        recolorElements(lastElements, lastNodeMap, lastAnalysis);
+        const value = forceSelect.value;
+        if (value.startsWith('custom_')) {
+            // Custom result: pass id
+            recolorElements(lastElements, lastNodeMap, lastAnalysis, '', value);
+        } else {
+            // Section force: pass key
+            recolorElements(lastElements, lastNodeMap, lastAnalysis, value);
+        }
     }
 });
 
-// Results panel: tab switching
+// Model panel: tab switching
 tabBtns.forEach(btn => btn.addEventListener('click', () => {
     const tab = btn.dataset.tab as 'nodes' | 'elements';
     if (tab === currentTab) return;
     currentTab = tab;
-    resultsFilter.value = '';
+    modelFilter.value = '';
     tabBtns.forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
-    if (lastAnalysis) buildTable();
+    buildTable();
 }));
 
-// Results panel: collapse/expand
-resultsToggle.addEventListener('click', () => {
-    const collapsed = resultsBody.style.display === 'none';
-    resultsBody.style.display = collapsed ? 'block' : 'none';
-    resultsToggle.innerHTML = collapsed ? 'Results &#9660;' : 'Results &#9650;';
+// Model panel: collapse
+modelCollapseBtn.addEventListener('click', () => {
+    modelPanel.classList.remove('open');
+    diagramPanel.style.display = 'none';
+    panelOpenBtn.style.display = 'block';
 });
 
-// Results panel: search filter
-resultsFilter.addEventListener('input', () => filterTable());
+// Model panel: re-open
+panelOpenBtn.addEventListener('click', () => {
+    modelPanel.classList.add('open');
+    panelOpenBtn.style.display = 'none';
+    if (selectedElementTag !== null) diagramPanel.style.display = 'block';
+});
+
+// Model panel: search filter
+modelFilter.addEventListener('input', () => filterTable());
 
 function filterTable(): void {
-    const q = resultsFilter.value.toLowerCase().trim();
-    const rows = Array.from(resultsTbody.querySelectorAll('tr'));
+    const q = modelFilter.value.toLowerCase().trim();
+    const rows = Array.from(modelTbody.querySelectorAll('tr'));
     for (const row of rows) {
         if (!q) { (row as HTMLElement).style.display = ''; continue; }
         const cells = Array.from(row.querySelectorAll('td'));
@@ -280,14 +308,20 @@ window.addEventListener('message', (event: MessageEvent<IncomingMessage>) => {
         runBtn.disabled = false;
         runBtn.textContent = '▶ Run Analysis';
         hideError();
-        populateForceSelector(msg.ndf);
+        populateForceSelector(msg.ndf, msg.data);
         forceSelector.style.display = 'block';
         lastAnalysis = msg.data;
         lastNdf = msg.ndf;
         if (forceSelect.value !== '') {
-            recolorElements(lastElements, lastNodeMap, msg.data);
+            const value = forceSelect.value;
+            if (value.startsWith('custom_')) {
+                recolorElements(lastElements, lastNodeMap, msg.data, '', value);
+            } else {
+                recolorElements(lastElements, lastNodeMap, msg.data, value);
+            }
         }
-        resultsPanel.style.display = 'block';
+        modelPanel.classList.add('open');
+        panelOpenBtn.style.display = 'none';
         buildTable();
         setStatus('Analysis complete');
     } else if (msg.type === 'takeScreenshot') {
@@ -308,10 +342,10 @@ function render(data: ModelData): void {
 
     addNodes(nodeMap);
     addElements(data.elements, nodeMap, data.viewer);
-    addSupports(data.supports, nodeMap, data.ndm, modelSize);
-    addLoads(data.nodal_loads, nodeMap, data.ndm, modelSize);
+    addSupports(data.supports, nodeMap, data.ndm, modelSize, data.viewer);
+    addLoads(data.nodal_loads, nodeMap, data.ndm, modelSize, data.viewer);
     if (data.ndm === 3) addGrid(modelSize, center);
-    addLabels(data.nodes, data.elements, data.nodal_loads, nodeMap, data.ndm);
+    addLabels(data.nodes, data.elements, data.nodal_loads, nodeMap, data.ndm, data.viewer?.label?.size ?? 1);
 
     initCamera(data.ndm, modelSize, center);
 
@@ -337,8 +371,10 @@ function render(data: ModelData): void {
     selectedElementTag = null;
     forceSelector.style.display = 'none';
     colorbar.style.display = 'none';
-    resultsPanel.style.display = 'none';
     diagramPanel.style.display = 'none';
+    modelPanel.classList.add('open');
+    panelOpenBtn.style.display = 'none';
+    buildTable();
 }
 
 function clear(): void {
@@ -401,7 +437,7 @@ function getCenter(nodeMap: Map<number, THREE.Vector3>): THREE.Vector3 {
     return center;
 }
 
-function makeLabel(text: string, pos: THREE.Vector3): THREE.Sprite {
+function makeLabel(text: string, pos: THREE.Vector3, size: number = 1): THREE.Sprite {
     const canvas = document.createElement('canvas');
     canvas.width = 128;
     canvas.height = 32;
@@ -417,7 +453,7 @@ function makeLabel(text: string, pos: THREE.Vector3): THREE.Sprite {
     const mat = new THREE.SpriteMaterial({ map: tex, depthTest: false, sizeAttenuation: false });
     const sprite = new THREE.Sprite(mat);
     sprite.position.copy(pos);
-    sprite.scale.set(0.06, 0.016, 1);
+    sprite.scale.set(0.06 * size, 0.016 * size, 1);
     return sprite;
 }
 
@@ -434,17 +470,18 @@ function addLabels(
     loads: NodalLoad[],
     nodeMap: Map<number, THREE.Vector3>,
     ndm: number,
+    size: number = 1,
 ): void {
     for (const node of nodes) {
         const pos = nodeMap.get(node.tag);
         if (!pos) continue;
-        nodeLabelGroup.add(makeLabel(`N${node.tag}`, pos.clone()));
+        nodeLabelGroup.add(makeLabel(`N${node.tag}`, pos.clone(), size));
     }
     for (const el of elements) {
         const a = nodeMap.get(el.nodes[0]);
         const b = nodeMap.get(el.nodes[el.nodes.length - 1]);
         if (!a || !b) continue;
-        elementLabelGroup.add(makeLabel(`E${el.tag}`, a.clone().lerp(b, 0.5)));
+        elementLabelGroup.add(makeLabel(`E${el.tag}`, a.clone().lerp(b, 0.5), size));
     }
     if (loads.length > 0) {
         let maxMag = 0;
@@ -458,7 +495,7 @@ function addLabels(
                 if (force.length() < 1e-12) continue;
                 const dir = force.clone().normalize();
                 const tail = pos.clone().sub(dir.clone().multiplyScalar(force.length() * arrowScale));
-                loadLabelGroup.add(makeLabel(fmtLoad(load.values, ndm), tail));
+                loadLabelGroup.add(makeLabel(fmtLoad(load.values, ndm), tail, size));
             }
         }
     }
@@ -543,10 +580,12 @@ function addSupports(
     nodeMap: Map<number, THREE.Vector3>,
     ndm: number,
     modelSize: number,
+    viewer?: Viewer,
 ): void {
-    const h = modelSize * 0.048;
-    const r = modelSize * 0.016;
-    const mat = new THREE.MeshBasicMaterial({ color: 0x66ddcc, side: THREE.DoubleSide });
+    const { scale = 1, color = '#66ddcc' } = viewer?.supports ?? {};
+    const h = modelSize * 0.048 * scale;
+    const r = modelSize * 0.016 * scale;
+    const mat = new THREE.MeshBasicMaterial({ color, side: THREE.DoubleSide });
 
     for (const support of supports) {
         const pos = nodeMap.get(support.tag);
@@ -587,9 +626,11 @@ function addLoads(
     nodeMap: Map<number, THREE.Vector3>,
     ndm: number,
     modelSize: number,
+    viewer?: Viewer,
 ): void {
     if (loads.length === 0) return;
-    const length = modelSize * 0.15;
+    const { scale = 1, color = '#ff4444' } = viewer?.nodalLoads ?? {};
+    const length = modelSize * 0.15 * scale;
     for (const load of loads) {
         const pos = nodeMap.get(load.tag);
         if (!pos) continue;
@@ -597,7 +638,7 @@ function addLoads(
         if (force.length() < 1e-12) continue;
         const dir = force.clone().normalize();
         const origin = pos.clone().sub(dir.clone().multiplyScalar(length));
-        add(new THREE.ArrowHelper(dir, origin, length, 0xff4444, length * 0.2, length * 0.1));
+        add(new THREE.ArrowHelper(dir, origin, length, color, length * 0.2, length * 0.1));
     }
 }
 
@@ -636,11 +677,23 @@ function toVec(values: number[], ndm: number): THREE.Vector3 {
 
 // --- Element colormap ---
 
-function populateForceSelector(ndf: number): void {
+function populateForceSelector(ndf: number, analysis?: AnalysisData): void {
     const components = forceComponents(ndf);
-    forceSelect.innerHTML =
-        '<option value="">— Select result —</option>' +
-        components.map((c, i) => `<option value="${i}">${c.label}</option>`).join('');
+    const options: string[] = ['<option value="">— Select result —</option>'];
+
+    // Section force options: value = key
+    for (const c of components) {
+        options.push(`<option value="${c.key}">${c.label}</option>`);
+    }
+
+    // Custom result options: value = id
+    if (analysis?.ops_elem_results) {
+        for (const r of analysis.ops_elem_results) {
+            options.push(`<option value="${r.id}" data-custom="true">${r.name}</option>`);
+        }
+    }
+
+    forceSelect.innerHTML = options.join('');
 }
 
 function restoreDefaultColors(
@@ -672,37 +725,54 @@ function recolorElements(
     elements: Element[],
     nodeMap: Map<number, THREE.Vector3>,
     analysis: AnalysisData,
+    key: string,
+    _id?: string,
 ): void {
-    const components = forceComponents(lastNdf);
-    const selectedIdx = parseInt(forceSelect.value, 10);
-    const component = components[selectedIdx];
-    if (!component) return;
+    let label: string;
+    let valuesMap: Record<number, number[]>;
 
-    const key = component.key;
+    if (_id) {
+        // Custom result
+        const custom = analysis.ops_elem_results?.find(r => r.id === _id);
+        if (!custom) return;
+        label = custom.name;
+        valuesMap = custom.values;
+    } else {
+        // Section force
+        const components = forceComponents(lastNdf);
+        const component = components.find(c => c.key === key);
+        if (!component) return;
+        label = component.label;
 
-    // Build tag → section forces lookup
-    const resultMap = new Map<number, ElementResult>();
-    for (const er of analysis.element_results) resultMap.set(er.tag, er);
+        // Build tag → element result map
+        const resultMap = new Map<number, ElementResult>();
+        for (const er of analysis.element_results) resultMap.set(er.tag, er);
 
-    // Find global min/max across all evaluation points
+        // Build values map from section forces
+        valuesMap = {};
+        for (const er of analysis.element_results) {
+            const vals = er.section_forces[key as keyof SectionForces];
+            if (vals) valuesMap[er.tag] = vals;
+        }
+    }
+
+    // Find global min/max
     const allValues: number[] = [];
-    for (const er of analysis.element_results) {
-        const vals = er.section_forces[key];
-        if (vals) for (const v of vals) allValues.push(v);
+    for (const vals of Object.values(valuesMap)) {
+        for (const v of vals) allValues.push(v);
     }
     if (allValues.length === 0) return;
     const min = Math.min(...allValues);
     const max = Math.max(...allValues);
     const range = max - min || 1;
 
-    // Build per-vertex colors — each segment gets start/end colors from evaluation points
+    // Build per-vertex colors
     const colors: number[] = [];
     for (const el of elements) {
         const a = nodeMap.get(el.nodes[0]);
         const b = nodeMap.get(el.nodes[el.nodes.length - 1]);
         if (!a || !b) continue;
-        const er = resultMap.get(el.tag);
-        const vals = er?.section_forces[key];
+        const vals = valuesMap[el.tag];
         for (let k = 0; k < segmentsPerElement; k++) {
             const vStart = vals ? vals[k] : 0;
             const vEnd = vals ? vals[k + 1] : 0;
@@ -714,7 +784,7 @@ function recolorElements(
         }
     }
 
-    // Find the LineSegments2 and update its colors
+    // Update geometry
     for (const obj of modelObjects) {
         if (obj instanceof LineSegments2) {
             (obj.geometry as LineSegmentsGeometry).setColors(colors);
@@ -722,7 +792,7 @@ function recolorElements(
         }
     }
 
-    updateColorbar(component.label, min, max);
+    updateColorbar(label, min, max);
 }
 
 function updateColorbar(title: string, min: number, max: number): void {
@@ -761,60 +831,41 @@ function buildTable(): void {
     else buildElementTable();
 }
 
-function dofLabels(ndf: number, prefix: string): string[] {
-    if (ndf <= 2) return [`${prefix}X`, `${prefix}Y`];
-    if (ndf === 3) return [`${prefix}X`, `${prefix}Y`, `${prefix}Rz`];
-    return [`${prefix}X`, `${prefix}Y`, `${prefix}Z`, `${prefix}Rx`, `${prefix}Ry`, `${prefix}Rz`];
-}
 
 function buildNodeTable(): void {
-    if (!lastAnalysis) return;
     const coordHeaders = lastNdm === 3 ? ['X', 'Y', 'Z'] : ['X', 'Y'];
-    const dispHeaders = dofLabels(lastNdf, 'd');
-    const reactHeaders = dofLabels(lastNdf, 'R');
 
-    resultsThead.innerHTML = '<tr>' +
-        ['Tag', ...coordHeaders, ...dispHeaders, ...reactHeaders]
-            .map(h => `<th>${h}</th>`).join('') +
+    modelThead.innerHTML = '<tr>' +
+        ['Tag', ...coordHeaders].map(h => `<th>${h}</th>`).join('') +
         '</tr>';
 
     const rows: string[] = [];
     for (const node of lastNodes) {
-        const nr = lastAnalysis.node_results.find(r => r.tag === node.tag);
         const coords = coordHeaders.map((_, i) => `<td>${fmt(node.coords[i])}</td>`).join('');
-        const disps = dispHeaders.map((_, i) => `<td>${nr && nr.disp[i] != null ? exp(nr.disp[i]) : '—'}</td>`).join('');
-        const reacts = reactHeaders.map((_, i) => `<td>${nr && nr.reaction[i] != null ? exp(nr.reaction[i]) : '—'}</td>`).join('');
-        rows.push(`<tr data-type="node" data-tag="${node.tag}"><td>${node.tag}</td>${coords}${disps}${reacts}</tr>`);
+        rows.push(`<tr data-type="node" data-tag="${node.tag}"><td>${node.tag}</td>${coords}</tr>`);
     }
-    resultsTbody.innerHTML = rows.join('');
+    modelTbody.innerHTML = rows.join('');
+}
+
+function sectionLabelMap(viewer: Viewer | undefined): Map<number, string> {
+    const map = new Map<number, string>();
+    if (!viewer?.sections) return map;
+    for (const sec of viewer.sections) {
+        if (sec.tag != null && sec.label) map.set(sec.tag, sec.label);
+    }
+    return map;
 }
 
 function buildElementTable(): void {
-    if (!lastAnalysis) return;
-    const comps = forceComponents(lastNdf);
-    const startHeaders = comps.map(c => `${c.label} (i)`);
-    const endHeaders = comps.map(c => `${c.label} (j)`);
+    modelThead.innerHTML = '<tr><th>Tag</th><th>Section</th></tr>';
 
-    resultsThead.innerHTML = '<tr>' +
-        ['Tag', 'Type', 'Nodes', ...startHeaders, ...endHeaders]
-            .map(h => `<th>${h}</th>`).join('') +
-        '</tr>';
-
+    const labels = sectionLabelMap(lastViewer);
     const rows: string[] = [];
     for (const el of lastElements) {
-        const er = lastAnalysis.element_results.find(r => r.tag === el.tag);
-        const sf = er?.section_forces;
-        const startForces = comps.map(c => {
-            const vals = sf?.[c.key];
-            return `<td>${vals ? exp(vals[0]) : '—'}</td>`;
-        }).join('');
-        const endForces = comps.map(c => {
-            const vals = sf?.[c.key];
-            return `<td>${vals ? exp(vals[vals.length - 1]) : '—'}</td>`;
-        }).join('');
-        rows.push(`<tr data-type="element" data-tag="${el.tag}"><td>${el.tag}</td><td>${el.type}</td><td>${el.nodes.join('→')}</td>${startForces}${endForces}</tr>`);
+        const sec = el.section != null ? labels.get(el.section) ?? '—' : '—';
+        rows.push(`<tr data-type="element" data-tag="${el.tag}"><td>${el.tag}</td><td class="type-cell">${sec}</td></tr>`);
     }
-    resultsTbody.innerHTML = rows.join('');
+    modelTbody.innerHTML = rows.join('');
 }
 
 // --- Element selection & diagram ---
@@ -826,7 +877,7 @@ const diagramCanvas = document.getElementById('diagram-canvas') as HTMLCanvasEle
 
 diagramClose.addEventListener('click', () => deselectElement());
 
-resultsTbody.addEventListener('click', (e: MouseEvent) => {
+modelTbody.addEventListener('click', (e: MouseEvent) => {
     const row = (e.target as HTMLElement).closest('tr');
     if (!row || row.dataset.type !== 'element') return;
     const tag = parseInt(row.dataset.tag!, 10);
@@ -838,7 +889,7 @@ function selectElement(tag: number): void {
     selectedElementTag = tag;
 
     // Highlight table row
-    const rows = Array.from(resultsTbody.querySelectorAll('tr[data-type="element"]'));
+    const rows = Array.from(modelTbody.querySelectorAll('tr[data-type="element"]'));
     for (const row of rows) {
         if (parseInt((row as HTMLElement).dataset.tag!, 10) === tag) {
             row.classList.add('selected');
@@ -863,12 +914,18 @@ function deselectElement(): void {
     diagramPanel.style.display = 'none';
 
     // Remove table highlight
-    const rows = Array.from(resultsTbody.querySelectorAll('tr.selected'));
+    const rows = Array.from(modelTbody.querySelectorAll('tr.selected'));
     for (const row of rows) row.classList.remove('selected');
 
     // Restore element colors
     if (forceSelect.value !== '' && lastAnalysis) {
-        recolorElements(lastElements, lastNodeMap, lastAnalysis);
+        const value = forceSelect.value;
+        // IMPROVE THIS TO A BETTER _id
+        if (value.startsWith('custom_')) {
+            recolorElements(lastElements, lastNodeMap, lastAnalysis, '', value);
+        } else {
+            recolorElements(lastElements, lastNodeMap, lastAnalysis, value);
+        }
     } else {
         restoreDefaultColors(lastElements, lastNodeMap);
     }
@@ -902,26 +959,28 @@ function drawDiagram(er: ElementResult): void {
     const ctx = diagramCanvas.getContext('2d')!;
 
     const plots: { label: string; values: number[] }[] = [];
-    if (sf.N) plots.push({ label: 'N (Axial)', values: sf.N });
-    if (sf.V) plots.push({ label: 'V (Shear)', values: sf.V });
-    if (sf.M) plots.push({ label: 'M (Moment)', values: sf.M });
-    if (sf.T) plots.push({ label: 'T (Torsion)', values: sf.T });
-    if (sf.Vz) plots.push({ label: 'Vz (Shear Z)', values: sf.Vz });
-    if (sf.My) plots.push({ label: 'My', values: sf.My });
-    if (sf.Mz) plots.push({ label: 'Mz', values: sf.Mz });
+    if (sf.N)  plots.push({ label: 'Axial',    values: sf.N });
+    if (sf.V)  plots.push({ label: 'Shear',    values: sf.V });
+    if (sf.M)  plots.push({ label: 'Moment',   values: sf.M });
+    if (sf.T)  plots.push({ label: 'Torsion',  values: sf.T });
+    if (sf.Vz) plots.push({ label: 'Shear Z',  values: sf.Vz });
+    if (sf.My) plots.push({ label: 'Moment Y', values: sf.My });
+    if (sf.Mz) plots.push({ label: 'Moment Z', values: sf.Mz });
 
     if (plots.length === 0) return;
 
     const subH = 100;
-    const pad = { top: 20, bottom: 10, left: 50, right: 20 };
-    diagramCanvas.width = diagramPanel.clientWidth - 16;
+    const pad = { top: 20, bottom: 10, left: 44, right: 8 };
+    const totalW = diagramPanel.clientWidth - 12;
+
+    diagramCanvas.width = totalW;
     diagramCanvas.height = plots.length * (subH + pad.top + pad.bottom);
 
     for (let i = 0; i < plots.length; i++) {
         const yOffset = i * (subH + pad.top + pad.bottom);
         drawSubplot(ctx, sf.x, plots[i].values, plots[i].label,
                     pad.left, yOffset + pad.top,
-                    diagramCanvas.width - pad.left - pad.right, subH);
+                    totalW - pad.left - pad.right, subH);
     }
 }
 
@@ -940,14 +999,21 @@ function drawSubplot(
     const xPx = (t: number): number => ox + t * w;
     const zeroY = yPx(0);
 
-    // Label
-    ctx.fillStyle = '#e0e0e0';
-    ctx.font = '11px sans-serif';
-    ctx.fillText(label, ox, oy - 4);
+    // Plot background
+    ctx.fillStyle = '#12122a';
+    ctx.fillRect(ox, oy, w, h);
+    ctx.strokeStyle = '#444466';
+    ctx.strokeRect(ox, oy, w, h);
 
-    // Zero line (dashed)
-    ctx.strokeStyle = '#666688';
-    ctx.setLineDash([4, 4]);
+    // Label (bold, above plot)
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 11px sans-serif';
+    ctx.fillText(label, ox, oy - 5);
+
+    // Zero line
+    ctx.strokeStyle = '#8888aa';
+    ctx.setLineDash([3, 3]);
+    ctx.lineWidth = 1;
     ctx.beginPath();
     ctx.moveTo(ox, zeroY);
     ctx.lineTo(ox + w, zeroY);
@@ -962,12 +1028,12 @@ function drawSubplot(
     }
     ctx.lineTo(xPx(x[x.length - 1]), zeroY);
     ctx.closePath();
-    ctx.fillStyle = 'rgba(78, 154, 200, 0.4)';
+    ctx.fillStyle = 'rgba(80, 180, 255, 0.35)';
     ctx.fill();
 
     // Outline
-    ctx.strokeStyle = '#4e9ac8';
-    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = '#60bbff';
+    ctx.lineWidth = 2;
     ctx.beginPath();
     for (let k = 0; k < x.length; k++) {
         if (k === 0) ctx.moveTo(xPx(x[k]), yPx(values[k]));
@@ -976,15 +1042,39 @@ function drawSubplot(
     ctx.stroke();
     ctx.lineWidth = 1;
 
-    // Min/max value labels
+    // Min/max value labels with background pill
     const p = precision();
-    const maxIdx = values.indexOf(Math.max(...values));
-    const minIdx = values.indexOf(Math.min(...values));
-    ctx.fillStyle = '#aaaacc';
+    const maxVal = Math.max(...values);
+    const minVal = Math.min(...values);
+    const maxIdx = values.indexOf(maxVal);
+    const minIdx = values.indexOf(minVal);
     ctx.font = '10px monospace';
-    ctx.fillText(values[maxIdx].toExponential(p), xPx(x[maxIdx]) + 4, yPx(values[maxIdx]) - 4);
+
+    const drawLabel = (text: string, lx: number, ly: number): void => {
+        const tw = ctx.measureText(text).width;
+        const lh = 12;
+        const px = 3;
+        const py = 2;
+        const pillH = lh + py * 2;
+        const pillW = tw + px * 2;
+        // Place below the point by default; flip above if it would exit bottom
+        let by = ly + 4;
+        if (by + pillH > oy + h) by = ly - pillH - 2;
+        // Clamp vertically inside plot
+        if (by < oy) by = oy + 2;
+        // Clamp horizontally inside plot
+        let bx = lx + 4;
+        if (bx + pillW > ox + w) bx = ox + w - pillW - 2;
+        if (bx < ox) bx = ox + 2;
+        ctx.fillStyle = '#dde0f0';
+        ctx.fillRect(bx, by, pillW, pillH);
+        ctx.fillStyle = '#111128';
+        ctx.fillText(text, bx + px, by + lh);
+    };
+
+    drawLabel(maxVal.toExponential(p), xPx(x[maxIdx]), yPx(maxVal));
     if (minIdx !== maxIdx) {
-        ctx.fillText(values[minIdx].toExponential(p), xPx(x[minIdx]) + 4, yPx(values[minIdx]) + 12);
+        drawLabel(minVal.toExponential(p), xPx(x[minIdx]), yPx(minVal));
     }
 }
 

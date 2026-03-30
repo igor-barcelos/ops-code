@@ -2,9 +2,14 @@
   "name": "ops-code",
   "displayName": "ops-code",
   "description": "Run openseespy models in vs-code",
-  "version": "0.1.0",
+  "version": "0.0.0",
   "publisher": "ops-code",
   "license": "MIT",
+  "icon": "assets/logo.png",
+  "galleryBanner": {
+    "color": "#f0f0f0",
+    "theme": "light"
+  },
   "repository": {
     "type": "git",
     "url": "https://github.com/igor-barcelos/ops-code"

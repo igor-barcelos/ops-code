@@ -1,5 +1,9 @@
 # ops-code
 
+## Maintaining This File
+
+**Keep CLAUDE.md up to date.** Whenever features are added, changed, or removed, update this file to reflect the current state. This includes new files, changed data flows, removed commands, and updated message types.
+
 ## Coding Guidelines
 
 1. **Simple is better than complicated.** This is a core principle. When in doubt, choose the simpler approach.

@@ -22,9 +22,21 @@ _NODE_COUNT: dict[str, int] = {
 }
 
 
+class NodalLoads(TypedDict, total=False):
+    scale: float
+    color: str
+
+
+class Supports(TypedDict, total=False):
+    scale: float
+    color: str
+
+
 class Viewer(TypedDict, total=False):
     sections: list[Section]
     precision: int
+    nodalLoads: NodalLoads
+    supports: Supports
 
 
 class ModelInterceptor:

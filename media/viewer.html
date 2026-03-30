@@ -47,63 +47,83 @@
       white-space: pre-wrap; word-break: break-all;
     }
 
-    #results-panel {
+    #model-panel {
       display: none;
-      position: absolute; bottom: 0; left: 0; right: 0; z-index: 10;
-      background: #1e1e32; border-top: 1px solid #444466; color: #e0e0e0;
-      max-height: 35vh; font-size: 11px; font-family: monospace;
+      position: absolute; left: 0; top: 40px; bottom: 0; width: 220px; z-index: 10;
+      background: #1e1e32; border-right: 1px solid #444466;
+      color: #e0e0e0; font-size: 11px; font-family: monospace;
+      flex-direction: column;
     }
-    #results-header {
+    #model-panel.open { display: flex; }
+    #model-header {
       display: flex; gap: 4px; align-items: center;
-      padding: 4px 8px; border-bottom: 1px solid #333355; background: #252540;
+      padding: 4px 6px; border-bottom: 1px solid #333355; background: #252540;
+      flex-shrink: 0;
     }
-    #results-header button { font-size: 11px; padding: 2px 8px; }
+    #model-header > span { font-weight: 600; margin-right: auto; }
+    #model-header button { font-size: 11px; padding: 2px 6px; }
     .tab-btn.active { background: #444466; font-weight: bold; }
-    #results-search {
-      padding: 4px 8px; border-bottom: 1px solid #333355; background: #252540;
+    #model-collapse-btn {
+      background: none; border: none; color: #aaa; font-size: 13px;
+      cursor: pointer; padding: 0 2px; margin-left: auto;
     }
-    #results-filter {
+    #model-collapse-btn:hover { color: #fff; }
+    #model-search {
+      padding: 4px 8px; border-bottom: 1px solid #333355; background: #252540; flex-shrink: 0;
+    }
+    #model-filter {
       width: 100%; background: #1a1a2e; color: #e0e0e0; border: 1px solid #444466;
       padding: 3px 6px; border-radius: 3px; font-size: 11px; font-family: monospace;
       outline: none;
     }
-    #results-filter:focus { border-color: #6666aa; }
-    #results-body {
-      overflow-y: auto; max-height: calc(35vh - 60px);
-    }
-    #results-table {
-      width: 100%; border-collapse: collapse;
-    }
-    #results-table th {
+    #model-filter:focus { border-color: #6666aa; }
+    #model-body { overflow-y: auto; flex: 1; }
+    #model-table { width: 100%; border-collapse: collapse; }
+    #model-table th {
       position: sticky; top: 0; background: #252540;
-      padding: 3px 8px; text-align: right; border-bottom: 1px solid #444466;
-      font-weight: 600;
+      padding: 3px 6px; text-align: right; border-bottom: 1px solid #444466;
+      font-weight: 600; white-space: nowrap;
     }
-    #results-table td {
-      padding: 3px 8px; text-align: right; border-bottom: 1px solid #2a2a44;
+    #model-table th:first-child { text-align: left; }
+    #model-table td {
+      padding: 3px 6px; text-align: right; border-bottom: 1px solid #2a2a44;
+      white-space: nowrap;
     }
-    #results-table tr:nth-child(even) td { background: #222238; }
-    #results-table tr:hover td { background: #333355; }
-    #results-table tr.selected td { background: #3a3a66; }
-    #results-table tr[data-type="element"] { cursor: pointer; }
+    #model-table td:first-child { text-align: left; }
+    #model-table td.type-cell {
+      max-width: 80px; overflow: hidden; text-overflow: ellipsis;
+    }
+    #model-table tr:nth-child(even) td { background: #222238; }
+    #model-table tr:hover td { background: #333355; }
+    #model-table tr.selected td { background: #3a3a66; }
+    #model-table tr[data-type="element"] { cursor: pointer; }
+
+    #panel-open-btn {
+      display: none;
+      position: absolute; left: 0; top: 50%; transform: translateY(-50%); z-index: 11;
+      background: #252540; border: 1px solid #444466; border-left: none;
+      color: #aaa; font-size: 12px; cursor: pointer;
+      padding: 10px 4px; border-radius: 0 3px 3px 0; writing-mode: vertical-rl;
+    }
+    #panel-open-btn:hover { color: #fff; background: #333355; }
 
     #diagram-panel {
       display: none;
-      position: absolute; right: 60px; top: 50%; transform: translateY(-50%); z-index: 10;
-      background: rgba(30,30,50,0.92); border: 1px solid #444466; border-radius: 4px;
-      padding: 8px; font-size: 11px; color: #e0e0e0; width: 350px;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.5);
+      position: absolute; left: 220px; top: 40px; bottom: 0; width: 280px; z-index: 10;
+      background: #1e1e32; border-right: 1px solid #444466;
+      color: #e0e0e0; font-size: 11px; overflow-y: auto;
     }
     #diagram-header {
       display: flex; justify-content: space-between; align-items: center;
-      margin-bottom: 4px;
+      padding: 4px 8px; border-bottom: 1px solid #333355; background: #252540;
+      position: sticky; top: 0;
     }
     #diagram-header button {
       background: none; border: none; color: #999; font-size: 16px;
       cursor: pointer; padding: 0 4px;
     }
     #diagram-header button:hover { color: #fff; }
-    #diagram-canvas { display: block; width: 100%; }
+    #diagram-canvas { display: block; padding: 6px; }
   </style>
 </head>
 <body>
@@ -129,19 +149,22 @@
     <span id="colorbar-min" class="colorbar-label">0</span>
   </div>
 
-  <div id="results-panel">
-    <div id="results-header">
-      <button id="results-toggle">Results &#9660;</button>
+  <button id="panel-open-btn" title="Open Model panel">Model &#9654;</button>
+
+  <div id="model-panel">
+    <div id="model-header">
+      <span>Model</span>
       <button class="tab-btn active" data-tab="nodes">Nodes</button>
       <button class="tab-btn" data-tab="elements">Elements</button>
+      <button id="model-collapse-btn" title="Collapse">&#9664;</button>
     </div>
-    <div id="results-search">
-      <input id="results-filter" type="text" placeholder="Filter...">
+    <div id="model-search">
+      <input id="model-filter" type="text" placeholder="Filter...">
     </div>
-    <div id="results-body">
-      <table id="results-table">
-        <thead id="results-thead"></thead>
-        <tbody id="results-tbody"></tbody>
+    <div id="model-body">
+      <table id="model-table">
+        <thead id="model-thead"></thead>
+        <tbody id="model-tbody"></tbody>
       </table>
     </div>
   </div>

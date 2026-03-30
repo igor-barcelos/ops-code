@@ -1,5 +1,9 @@
 # ops-code
 
+<p align="center">
+  <img src="assets/logo.png" alt="ops-code logo" width="300"/>
+</p>
+
 Run OpenSeesPy structural models directly in VS Code with instant 3D visualization and interactive analysis results.
 
 ## Features
@@ -72,7 +76,7 @@ __viewer__ = {
         {
             'tag': 1,
             'color': '#e06c75',      # CSS color
-            'label': 'CHS 114x8'      # Optional label
+            'label': 'CHS 114x8'     # Optional label shown in Elements tab
         },
         {
             'tag': 2,
@@ -80,7 +84,18 @@ __viewer__ = {
             'label': 'LS 50x5'
         }
     ],
-    'precision': 4                    # Significant figures in results panel
+    'precision': 4,                  # Significant figures in results panel
+    'nodalLoads': {
+        'scale': 1.5,                # Arrow length multiplier
+        'color': '#ff8800'           # CSS color
+    },
+    'supports': {
+        'scale': 1.2,                # Symbol size multiplier
+        'color': '#44aaff'           # CSS color
+    },
+    'label': {
+        'size': 1.0                  # Node/element label size multiplier (e.g. 2.0 = double size)
+    }
 }
 ```
 
@@ -91,6 +106,7 @@ All fields are optional. An empty `__viewer__ = {}` or missing definition uses d
 - **Mouse**: Rotate (drag), Pan (middle-click + drag), Zoom (scroll)
 - **Analysis panel**: Toggle results visibility, switch between force components
 - **Elements tab**: Click to select and view member diagrams
+- **Ctrl+S** (viewer focused): Save a screenshot of the current view
 
 ## Known Limitations
 
