@@ -4,7 +4,7 @@
   <img src="assets/logo.png" alt="ops-code logo" width="300"/>
 </p>
 
-Run OpenSeesPy structural models directly in VS Code with instant 3D visualization and interactive analysis results.
+Run openseespy models directly in VS Code with instant 3D visualization and interactive analysis results.
 
 ![ops-code demo](assets/demo_3.gif)
 
