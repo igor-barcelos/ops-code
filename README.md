@@ -162,7 +162,7 @@ import openseespy.opensees as ops
 from tools import buckling_en1993
 ```
 
-Only declared tools run — tools present in `tools/` but not imported are ignored.
+Only tools imported in your model file are run.
 
 ### Current Limitations
 
