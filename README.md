@@ -117,7 +117,7 @@ Place a `.py` file in a `tools/` folder next to your model script:
 
 ```
 my_project/
-  portal_frame.py
+  pylone.py
   tools/
     buckling_en1993.py
 ```
