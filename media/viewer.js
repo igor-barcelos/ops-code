@@ -24313,6 +24313,55 @@ void main() {
       { label: "Moment Z", key: "Mz" }
     ];
   }
+  var TRUSS_TYPES = /* @__PURE__ */ new Set(["truss", "corottruss", "trusssection"]);
+  var NEP = 11;
+  function elementLength(nodes, nodeMap) {
+    if (nodes.length < 2) {
+      return 0;
+    }
+    const a = nodeMap.get(nodes[0]);
+    const b = nodeMap.get(nodes[1]);
+    if (!a || !b) {
+      return 0;
+    }
+    return a.distanceTo(b);
+  }
+  function sectionForces(lf, L, ndf, ndm, etype) {
+    const nlf = lf.length;
+    const x = Array.from({ length: NEP }, (_, i) => i / (NEP - 1));
+    const fill = (v) => Array(NEP).fill(v);
+    if (nlf >= 12 && ndf >= 6) {
+      const [N1, Vy1, Vz1, T1, My1, Mz1] = lf;
+      return {
+        x,
+        N: fill(-N1),
+        V: fill(Vy1),
+        Vz: fill(Vz1),
+        T: fill(-T1),
+        My: x.map((t) => -My1 - Vz1 * (t * L)),
+        Mz: x.map((t) => -Mz1 + Vy1 * (t * L))
+      };
+    }
+    if (nlf >= 6 && ndf >= 3) {
+      if (TRUSS_TYPES.has(etype.toLowerCase()) && ndm === 3) {
+        const N = Math.sqrt(lf[0] ** 2 + lf[1] ** 2 + lf[2] ** 2);
+        const dominant = [lf[0], lf[1], lf[2]].reduce((a, b) => Math.abs(a) >= Math.abs(b) ? a : b);
+        const sign = dominant < 0 ? 1 : -1;
+        return { x, N: fill(sign * N) };
+      }
+      const [N1, V1, M1] = lf;
+      return {
+        x,
+        N: fill(-N1),
+        V: fill(V1),
+        M: x.map((t) => -M1 + V1 * (t * L))
+      };
+    }
+    if (nlf >= 2) {
+      return { x, N: fill(-lf[0]) };
+    }
+    return nlf > 0 ? { x, N: fill(lf[0]) } : { x };
+  }
   function rainbow(t) {
     t = Math.max(0, Math.min(1, t));
     return new Color().setHSL((1 - t) * 0.667, 1, 0.55);
@@ -24342,7 +24391,7 @@ void main() {
   var elementLabelGroup = new Group();
   var loadLabelGroup = new Group();
   scene.add(nodeLabelGroup, elementLabelGroup, loadLabelGroup);
-  var lastAnalysis = null;
+  var lastOutputs = null;
   var lastElements = [];
   var lastNodes = [];
   var lastNdm = 2;
@@ -24351,9 +24400,11 @@ void main() {
   var lastViewer;
   var nodeTagsByIndex = [];
   var elementTagsBySegment = [];
-  var NEP = 11;
   var segmentsPerElement = NEP - 1;
   var selectedElementTag = null;
+  var lastToolOutputs = [];
+  var activeToolTab = null;
+  var activeElementTag = null;
   var statusEl = document.getElementById("status");
   var labelsSelect = document.getElementById("labels-select");
   var errorBanner = document.getElementById("error-banner");
@@ -24374,6 +24425,18 @@ void main() {
   var modelFilter = document.getElementById("model-filter");
   var tabBtns = modelPanel.querySelectorAll(".tab-btn");
   var currentTab = "nodes";
+  var resultsPanel = document.getElementById("results-panel");
+  var resultsCollapseBtn = document.getElementById("results-collapse-btn");
+  var resultsOpenBtn = document.getElementById("results-open-btn");
+  var resultsTabs = document.getElementById("results-tabs");
+  var resultsElementSelect = document.getElementById("results-element-select");
+  var resultsThead = document.getElementById("results-thead");
+  var resultsTbody = document.getElementById("results-tbody");
+  resultsElementSelect.addEventListener("change", () => {
+    const v = resultsElementSelect.value;
+    activeElementTag = v === "" ? null : parseInt(v, 10);
+    buildToolTable();
+  });
   runBtn.addEventListener("click", () => vscodeApi.postMessage({ type: "runAnalysis" }));
   screenshotBtn.addEventListener("click", () => {
     renderer.render(scene, camera);
@@ -24390,13 +24453,8 @@ void main() {
   forceSelect.addEventListener("change", () => {
     if (forceSelect.value === "") {
       restoreDefaultColors(lastElements, lastNodeMap);
-    } else if (lastAnalysis) {
-      const value = forceSelect.value;
-      if (value.startsWith("custom_")) {
-        recolorElements(lastElements, lastNodeMap, lastAnalysis, "", value);
-      } else {
-        recolorElements(lastElements, lastNodeMap, lastAnalysis, value);
-      }
+    } else if (lastOutputs) {
+      recolorElements(lastElements, lastNodeMap, lastOutputs, forceSelect.value);
     }
   });
   tabBtns.forEach((btn) => btn.addEventListener("click", () => {
@@ -24420,6 +24478,16 @@ void main() {
       diagramPanel.style.display = "block";
   });
   modelFilter.addEventListener("input", () => filterTable());
+  resultsCollapseBtn.addEventListener("click", () => {
+    resultsPanel.classList.remove("open");
+    document.body.classList.remove("results-open");
+    resultsOpenBtn.style.display = "block";
+  });
+  resultsOpenBtn.addEventListener("click", () => {
+    resultsPanel.classList.add("open");
+    document.body.classList.add("results-open");
+    resultsOpenBtn.style.display = "none";
+  });
   function filterTable() {
     const q2 = modelFilter.value.toLowerCase().trim();
     const rows = Array.from(modelTbody.querySelectorAll("tr"));
@@ -24478,22 +24546,29 @@ void main() {
       runBtn.disabled = false;
       runBtn.textContent = "\u25B6 Run Analysis";
       hideError();
-      populateForceSelector(msg.ndf, msg.data);
+      populateForceSelector(msg.ndf);
       forceSelector.style.display = "block";
-      lastAnalysis = msg.data;
+      lastOutputs = msg.data;
       lastNdf = msg.ndf;
       if (forceSelect.value !== "") {
-        const value = forceSelect.value;
-        if (value.startsWith("custom_")) {
-          recolorElements(lastElements, lastNodeMap, msg.data, "", value);
-        } else {
-          recolorElements(lastElements, lastNodeMap, msg.data, value);
-        }
+        recolorElements(lastElements, lastNodeMap, msg.data, forceSelect.value);
       }
       modelPanel.classList.add("open");
       panelOpenBtn.style.display = "none";
       buildTable();
       setStatus("Analysis complete");
+    } else if (msg.type === "toolUse") {
+      lastToolOutputs = msg.data;
+      if (msg.data.length > 0) {
+        activeToolTab = msg.data[0].name;
+        activeElementTag = firstTagOf(activeToolTab);
+        buildToolTabs();
+        buildElementSelect();
+        buildToolTable();
+        resultsPanel.classList.add("open");
+        document.body.classList.add("results-open");
+        resultsOpenBtn.style.display = "none";
+      }
     } else if (msg.type === "takeScreenshot") {
       renderer.render(scene, camera);
       const data = renderer.domElement.toDataURL("image/png");
@@ -24530,7 +24605,7 @@ void main() {
     lastNdf = data.ndf;
     lastNodeMap = nodeMap;
     lastViewer = data.viewer;
-    lastAnalysis = null;
+    lastOutputs = null;
     selectedElementTag = null;
     forceSelector.style.display = "none";
     colorbar.style.display = "none";
@@ -24538,6 +24613,16 @@ void main() {
     modelPanel.classList.add("open");
     panelOpenBtn.style.display = "none";
     buildTable();
+    lastToolOutputs = [];
+    activeToolTab = null;
+    activeElementTag = null;
+    resultsPanel.classList.remove("open");
+    document.body.classList.remove("results-open");
+    resultsOpenBtn.style.display = "none";
+    resultsTabs.innerHTML = "";
+    resultsElementSelect.innerHTML = "";
+    resultsThead.innerHTML = "";
+    resultsTbody.innerHTML = "";
   }
   function clear() {
     for (const obj of modelObjects) {
@@ -24787,16 +24872,11 @@ void main() {
     }
     return new Vector3(values[0] ?? 0, values[1] ?? 0, 0);
   }
-  function populateForceSelector(ndf, analysis) {
+  function populateForceSelector(ndf) {
     const components = forceComponents(ndf);
     const options = ['<option value="">\u2014 Select result \u2014</option>'];
     for (const c of components) {
       options.push(`<option value="${c.key}">${c.label}</option>`);
-    }
-    if (analysis?.ops_elem_results) {
-      for (const r of analysis.ops_elem_results) {
-        options.push(`<option value="${r.id}" data-custom="true">${r.name}</option>`);
-      }
     }
     forceSelect.innerHTML = options.join("");
   }
@@ -24822,29 +24902,22 @@ void main() {
     }
     colorbar.style.display = "none";
   }
-  function recolorElements(elements, nodeMap, analysis, key, _id) {
-    let label;
-    let valuesMap;
-    if (_id) {
-      const custom = analysis.ops_elem_results?.find((r) => r.id === _id);
-      if (!custom)
-        return;
-      label = custom.name;
-      valuesMap = custom.values;
-    } else {
-      const components = forceComponents(lastNdf);
-      const component = components.find((c) => c.key === key);
-      if (!component)
-        return;
-      label = component.label;
-      const resultMap = /* @__PURE__ */ new Map();
-      for (const er of analysis.element_results)
-        resultMap.set(er.tag, er);
-      valuesMap = {};
-      for (const er of analysis.element_results) {
-        const vals = er.section_forces[key];
-        if (vals)
-          valuesMap[er.tag] = vals;
+  function recolorElements(elements, nodeMap, outputs, key) {
+    const components = forceComponents(lastNdf);
+    const component = components.find((c) => c.key === key);
+    if (!component)
+      return;
+    const label = component.label;
+    const valuesMap = {};
+    for (const er of outputs.elements) {
+      const lf = er.responses.localForce;
+      if (!lf) {
+        continue;
+      }
+      const L = elementLength(er.nodes, nodeMap);
+      const vals = sectionForces(lf, L, lastNdf, lastNdm, er.type)[key];
+      if (vals) {
+        valuesMap[er.eleTag] = vals;
       }
     }
     const allValues = [];
@@ -24941,6 +25014,83 @@ void main() {
     }
     modelTbody.innerHTML = rows.join("");
   }
+  function escapeHtml(s) {
+    return s.replace(/[&<>"']/g, (c) => c === "&" ? "&amp;" : c === "<" ? "&lt;" : c === ">" ? "&gt;" : c === '"' ? "&quot;" : "&#39;");
+  }
+  function firstTagOf(toolName) {
+    const tool = lastToolOutputs.find((t) => t.name === toolName);
+    return tool && tool.elements.length > 0 ? tool.elements[0].tag : null;
+  }
+  function uniqueTags(toolName) {
+    const tool = lastToolOutputs.find((t) => t.name === toolName);
+    if (!tool)
+      return [];
+    const seen = /* @__PURE__ */ new Set();
+    const tags = [];
+    for (const el of tool.elements) {
+      if (!seen.has(el.tag)) {
+        seen.add(el.tag);
+        tags.push(el.tag);
+      }
+    }
+    return tags;
+  }
+  function buildToolTabs() {
+    resultsTabs.innerHTML = "";
+    for (const t of lastToolOutputs) {
+      const btn = document.createElement("button");
+      btn.className = "tab-btn" + (t.name === activeToolTab ? " active" : "");
+      btn.textContent = t.name;
+      btn.addEventListener("click", () => {
+        if (activeToolTab === t.name)
+          return;
+        activeToolTab = t.name;
+        activeElementTag = firstTagOf(t.name);
+        for (const c of Array.from(resultsTabs.children)) {
+          c.classList.toggle("active", c.textContent === t.name);
+        }
+        buildElementSelect();
+        buildToolTable();
+      });
+      resultsTabs.appendChild(btn);
+    }
+  }
+  function buildElementSelect() {
+    const tags = uniqueTags(activeToolTab);
+    resultsElementSelect.innerHTML = tags.map((t) => `<option value="${t}">${t}</option>`).join("");
+    if (activeElementTag !== null) {
+      resultsElementSelect.value = String(activeElementTag);
+    }
+  }
+  function formatToolValue(v) {
+    if (typeof v === "number") {
+      if (!isFinite(v))
+        return String(v);
+      const abs = Math.abs(v);
+      if (abs !== 0 && (abs >= 1e4 || abs < 1e-3))
+        return v.toExponential(precision());
+      return v.toFixed(precision());
+    }
+    return String(v);
+  }
+  function buildToolTable() {
+    const tool = lastToolOutputs.find((t) => t.name === activeToolTab);
+    if (!tool || activeElementTag === null) {
+      resultsThead.innerHTML = "";
+      resultsTbody.innerHTML = "";
+      return;
+    }
+    resultsThead.innerHTML = '<tr><th class="col-name">Name</th><th class="col-value">Value</th><th class="col-desc">Description</th></tr>';
+    const rows = [];
+    for (const el of tool.elements) {
+      if (el.tag !== activeElementTag)
+        continue;
+      rows.push(
+        `<tr><td class="col-name">${escapeHtml(el.name)}</td><td class="col-value">${escapeHtml(formatToolValue(el.value))}</td><td class="col-desc">${escapeHtml(el.description ?? "")}</td></tr>`
+      );
+    }
+    resultsTbody.innerHTML = rows.join("");
+  }
   var diagramPanel = document.getElementById("diagram-panel");
   var diagramTitle = document.getElementById("diagram-title");
   var diagramClose = document.getElementById("diagram-close");
@@ -24963,9 +25113,9 @@ void main() {
       }
     }
     highlightElement(tag);
-    if (!lastAnalysis)
+    if (!lastOutputs)
       return;
-    const er = lastAnalysis.element_results.find((r) => r.tag === tag);
+    const er = lastOutputs.elements.find((r) => r.eleTag === tag);
     if (!er)
       return;
     diagramTitle.textContent = `Element ${tag}`;
@@ -24980,13 +25130,8 @@ void main() {
     const rows = Array.from(modelTbody.querySelectorAll("tr.selected"));
     for (const row of rows)
       row.classList.remove("selected");
-    if (forceSelect.value !== "" && lastAnalysis) {
-      const value = forceSelect.value;
-      if (value.startsWith("custom_")) {
-        recolorElements(lastElements, lastNodeMap, lastAnalysis, "", value);
-      } else {
-        recolorElements(lastElements, lastNodeMap, lastAnalysis, value);
-      }
+    if (forceSelect.value !== "" && lastOutputs) {
+      recolorElements(lastElements, lastNodeMap, lastOutputs, forceSelect.value);
     } else {
       restoreDefaultColors(lastElements, lastNodeMap);
     }
@@ -25012,7 +25157,12 @@ void main() {
     }
   }
   function drawDiagram(er) {
-    const sf = er.section_forces;
+    const lf = er.responses.localForce;
+    if (!lf) {
+      return;
+    }
+    const L = elementLength(er.nodes, lastNodeMap);
+    const sf = sectionForces(lf, L, lastNdf, lastNdm, er.type);
     const ctx = diagramCanvas.getContext("2d");
     const plots = [];
     if (sf.N)

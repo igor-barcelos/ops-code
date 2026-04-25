@@ -1,8 +1,10 @@
 import * as fs from 'fs';
+import * as path from 'path';
 import * as vscode from 'vscode';
 import { pythonPath, intercept, analyze } from './runner';
+import { exec } from './tool_manager';
 import { watch } from './watcher';
-import { WebViewMessage, ViewerMessage } from './types';
+import { Outputs, WebViewMessage, ViewerMessage } from './types';
 
 export class Panel {
     private static instance: Panel | undefined;
@@ -83,11 +85,23 @@ export class Panel {
         try {
             const py = await pythonPath();
             const data = await analyze(py, this.extensionUri, this.scriptPath);
-            if (data.analysis) {
-                this.post({ type: 'analysisData', data: data.analysis, ndf: data.ndf });
-            } else {
-                this.post({ type: 'error', message: 'Analysis did not converge.' });
+            if (data.error) {
+                this.post({ type: 'error', message: data.error });
+            } else if (data.outputs) {
+                this.post({ type: 'analysisData', data: data.outputs, ndf: data.ndf });
+                this.runTools(data.outputs, data.tools ?? []);
             }
+        } catch (err: unknown) {
+            this.post({ type: 'error', message: err instanceof Error ? err.message : String(err) });
+        }
+    }
+
+    private async runTools(outputs: Outputs, tools: string[]): Promise<void> {
+        const modelDir = path.dirname(this.scriptPath);
+        const py = await pythonPath();
+        try {
+            const data = await exec(modelDir, py, this.extensionUri, outputs, tools);
+            if (data.length > 0) { this.post({ type: 'toolUse', data }); }
         } catch (err: unknown) {
             this.post({ type: 'error', message: err instanceof Error ? err.message : String(err) });
         }

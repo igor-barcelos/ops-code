@@ -16,8 +16,9 @@ _NODE_COUNT: dict[str, int] = {
     'elasticBeamColumn': 2,
     'forceBeamColumn': 2,
     'dispBeamColumn': 2,
-    'truss': 2,
-    'corotTruss': 2,
+    'Truss': 2,
+    'TrussSection': 2,
+    'CorotTruss': 2,
     'zeroLength': 2,
 }
 
@@ -37,6 +38,12 @@ class Viewer(TypedDict, total=False):
     precision: int
     nodalLoads: NodalLoads
     supports: Supports
+
+
+class InterceptorStop(Exception):
+    """Raised by the interceptor to cleanly stop script execution once the
+    model is fully defined. Not an error — the caller should swallow it."""
+    pass
 
 
 class ModelInterceptor:
@@ -101,6 +108,9 @@ class ModelInterceptor:
 
     def wipe(self) -> None:
         pass
+
+    def analyze(self, *args: Any, **kwargs: Any) -> None:
+        raise InterceptorStop()
 
     def __getattr__(self, name: str) -> Any:
         return lambda *args, **kwargs: None

@@ -53,7 +53,7 @@ __viewer__ = {
     'nodalLoads': {'scale': 2.0, 'color': '#ff4444'},
     'supports':   {'scale': 1.0, 'color': '#55cc88'},
     'precision': 4,
-    'label': {'size': 10},
+    'label': {'size': 15},
 }
 
 ops.system('BandGeneral')

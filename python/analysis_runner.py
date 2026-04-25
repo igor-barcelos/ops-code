@@ -4,14 +4,39 @@ Input:  script path (sys.argv[1])
 Output: JSON to stdout — Phase 1 model data + analysis results block
 """
 
+import ast
 import io
 import json
-import math
 import os
 import sys
 from typing import Any
 
 import openseespy.opensees as ops
+
+
+# Node counts for common element types (keep in sync with interceptor._NODE_COUNT)
+_NODE_COUNT: dict[str, int] = {
+    'elasticBeamColumn': 2,
+    'forceBeamColumn': 2,
+    'dispBeamColumn': 2,
+    'Truss': 2,
+    'TrussSection': 2,
+    'CorotTruss': 2,
+    'zeroLength': 2,
+}
+
+
+def _extract_tools(filepath: str) -> list[str]:
+    try:
+        with open(filepath, encoding='utf-8') as f:
+            tree = ast.parse(f.read())
+        tools: list[str] = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.module == 'tools':
+                tools.extend(alias.name for alias in node.names)
+        return tools
+    except Exception:
+        return []
 
 
 def run(script_path: str) -> dict[str, Any]:
@@ -25,6 +50,9 @@ def run(script_path: str) -> dict[str, Any]:
     elements: list[dict[str, Any]] = []
     supports: list[dict[str, Any]] = []
     nodal_loads: list[dict[str, Any]] = []
+    materials: dict[int, dict[str, Any]] = {}       # matTag -> {"type": "Elastic", "E": float}
+    sections_by_tag: dict[int, dict[str, Any]] = {} # secTag -> {"type": "Elastic", "E", "A", ...}
+    element_args: dict[int, list[Any]] = {}         # eleTag -> trailing args after node tags
     # --- Wrap real ops functions to record tags ---
 
     real_model = ops.model
@@ -48,15 +76,37 @@ def run(script_path: str) -> dict[str, Any]:
     real_element = ops.element
     def patched_element(etype: str, tag: int, *args: Any) -> None:
         recorded_elements.append(int(tag))
-        node_tags: list[int] = []
-        for arg in args:
-            if isinstance(arg, int):
-                node_tags.append(arg)
-            else:
-                break
+        ncount = _NODE_COUNT.get(etype, 2)
+        node_tags = [int(a) for a in args[:ncount]]
+        trailing = list(args[ncount:])
         elements.append({"tag": int(tag), "type": str(etype), "nodes": node_tags})
+        element_args[int(tag)] = trailing
         real_element(etype, tag, *args)
     ops.element = patched_element  # type: ignore[method-assign]
+
+    real_uniaxialMaterial = ops.uniaxialMaterial
+    def patched_uniaxialMaterial(matType: str, matTag: int, *args: Any) -> None:
+        if matType == 'Elastic' and len(args) >= 1:
+            materials[int(matTag)] = {"type": "Elastic", "E": float(args[0])}
+        real_uniaxialMaterial(matType, matTag, *args)
+    ops.uniaxialMaterial = patched_uniaxialMaterial  # type: ignore[method-assign]
+
+    real_section = ops.section
+    def patched_section(secType: str, secTag: int, *args: Any) -> None:
+        if secType == 'Elastic' and len(args) >= 3:
+            entry: dict[str, Any] = {
+                "type": "Elastic",
+                "E": float(args[0]),
+                "A": float(args[1]),
+                "Iz": float(args[2]),
+            }
+            if len(args) >= 6:
+                entry["Iy"] = float(args[3])
+                entry["G"] = float(args[4])
+                entry["J"] = float(args[5])
+            sections_by_tag[int(secTag)] = entry
+        real_section(secType, secTag, *args)
+    ops.section = patched_section  # type: ignore[method-assign]
 
     real_fix = ops.fix
     def patched_fix(tag: int, *dofs: int) -> None:
@@ -74,33 +124,20 @@ def run(script_path: str) -> dict[str, Any]:
 
     error: str | None = None
     converged: bool = False
-    ops_elem_results: list[dict[str, Any]] = []
 
-    def ops_elem_result(name: str, values: dict[int, float | list[float]]) -> None:
-        """Register a custom element result for visualization."""
-        wrapped_values: dict[int, list[float]] = {}
-        for tag, val in values.items():
-            if isinstance(val, (int, float)):
-                wrapped_values[int(tag)] = [float(val)]
-            elif isinstance(val, list):
-                wrapped_values[int(tag)] = [float(v) for v in val]
-
-        ops_elem_results.append({
-            "id": f"custom_{len(ops_elem_results)}",
-            "name": name,
-            "values": wrapped_values,
-        })
+    filepath = os.path.abspath(script_path)
+    script_dir = os.path.dirname(filepath)
+    if script_dir not in sys.path:
+        sys.path.insert(0, script_dir)
 
     old_stdout = sys.stdout
     sys.stdout = io.StringIO()
     try:
-        filepath = os.path.abspath(script_path)
         with open(filepath, 'r', encoding='utf-8') as f:
             code = f.read()
         namespace = {
             '__name__': '__main__',
             '__file__': filepath,
-            'ops_elem_result': ops_elem_result,
         }
         exec(compile(code, filepath, 'exec'), namespace)
         converged = True
@@ -108,28 +145,32 @@ def run(script_path: str) -> dict[str, Any]:
         error = str(exc)
     finally:
         sys.stdout = old_stdout
-        _restore_ops(real_model, real_node, real_element, real_fix, real_load)
+        _restore_ops(
+            real_model, real_node, real_element, real_fix, real_load,
+            real_uniaxialMaterial, real_section,
+        )
 
     # --- Query results ---
 
-    node_results: list[dict[str, Any]] = []
-    element_results: list[dict[str, Any]] = []
+    outputs_nodes: list[dict[str, Any]] = []
+    outputs_elements: list[dict[str, Any]] = []
+    outputs_sections: list[dict[str, Any]] = []
+
+    coords_by_tag: dict[int, list[float]] = {n["tag"]: n["coords"] for n in nodes}
 
     if converged:
         for tag in recorded_nodes:
             try:
-                node_results.append({
-                    "tag": tag,
-                    "disp": ops.nodeDisp(tag),
-                    "reaction": ops.nodeReaction(tag),
-                })
+                disp = ops.nodeDisp(tag)
+                reaction = ops.nodeReaction(tag)
             except Exception:
-                pass
-
-        # Build node coord lookup for element length computation
-        node_coords: dict[int, list[float]] = {}
-        for n in nodes:
-            node_coords[n["tag"]] = n["coords"]
+                continue
+            outputs_nodes.append({
+                "tag": tag,
+                "coords": coords_by_tag.get(tag, []),
+                "displacement": disp,
+                "reaction": reaction,
+            })
 
         for el in elements:
             tag = el["tag"]
@@ -138,24 +179,19 @@ def run(script_path: str) -> dict[str, Any]:
             except Exception:
                 continue
 
-            # Compute element length from node coordinates
-            el_nodes = el["nodes"]
-            if len(el_nodes) >= 2 and el_nodes[0] in node_coords and el_nodes[1] in node_coords:
-                c0 = node_coords[el_nodes[0]]
-                c1 = node_coords[el_nodes[1]]
-                L = math.sqrt(sum((a - b) ** 2 for a, b in zip(c0, c1)))
-            else:
-                L = 0.0
-
-            sf = _section_forces(lf, L, ndf, ndm, el["type"])
-            element_results.append({
-                "tag": tag,
-                "local_forces": lf,
-                "section_forces": sf,
+            outputs_elements.append({
+                "eleTag": tag,
+                "type": el["type"],
+                "nodes": el["nodes"],
+                "responses": {"localForce": lf},
             })
 
+            sec = _section_for_element(el["type"], element_args.get(tag, []), materials, sections_by_tag)
+            if sec is not None:
+                outputs_sections.append({"eleTag": tag, **sec})
+
     return {
-        "schema_version": 2,
+        "schema_version": 3,
         "ndm": ndm,
         "ndf": ndf,
         "nodes": nodes,
@@ -163,98 +199,59 @@ def run(script_path: str) -> dict[str, Any]:
         "supports": supports,
         "nodal_loads": nodal_loads,
         "error": error,
-        "analysis": {
-            "converged": converged,
-            "node_results": node_results,
-            "element_results": element_results,
-            "ops_elem_results": ops_elem_results if ops_elem_results else None,
+        "tools": _extract_tools(os.path.abspath(script_path)),
+        "outputs": {
+            "nodes": outputs_nodes,
+            "elements": outputs_elements,
+            "sections": outputs_sections,
         },
     }
 
 
-_TRUSS_TYPES = {'truss', 'corottruss', 'trusssection'}
+def _section_for_element(
+    etype: str,
+    trailing: list[Any],
+    materials: dict[int, dict[str, Any]],
+    sections_by_tag: dict[int, dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Synthesize an ElasticSection-shaped dict for an element, or None if not resolvable."""
+    if etype in ("Truss", "CorotTruss") and len(trailing) >= 2:
+        A = float(trailing[0])
+        mat = materials.get(int(trailing[1]))
+        if mat and mat["type"] == "Elastic":
+            return {"type": "Elastic", "E": mat["E"], "A": A}
 
-def _section_forces(
-    lf: list[float], L: float, ndf: int, ndm: int, etype: str = '', nep: int = 11
-) -> dict[str, list[float]]:
-    """Compute section forces at nep evaluation points along the element.
+    if etype == "TrussSection" and len(trailing) >= 1:
+        sec = sections_by_tag.get(int(trailing[0]))
+        if sec is not None:
+            return dict(sec)
 
-    Uses opsvis sign convention for Euler-Bernoulli beams:
-      N(x) = -N1,  V(x) = V1,  M(x) = -M1 + V1*x
-
-    Args:
-        lf:    local end forces from eleResponse('localForces')
-        L:     element length
-        ndf:   degrees of freedom per node (model-level)
-        ndm:   number of spatial dimensions (2 or 3)
-        etype: element type string (e.g. 'Truss', 'elasticBeamColumn')
-        nep:   number of evaluation points (default 11)
-
-    Returns:
-        Dict with 'x' (normalized positions) and force component arrays.
-        Keys depend on element type:
-          truss        → N only
-          2D frame     → N, V, M
-          3D frame     → N, V, Vz, T, My, Mz
-    """
-    nlf = len(lf)
-    x = [i / (nep - 1) for i in range(nep)]
-    is_truss = etype.lower() in _TRUSS_TYPES
-
-    if nlf >= 12 and ndf >= 6:
-        # 3D frame element (e.g. elasticBeamColumn, forceBeamColumn in 3D)
-        # lf = [N1, Vy1, Vz1, T1, My1, Mz1,  N2, Vy2, Vz2, T2, My2, Mz2]
-        # Forces at node 1 only are needed; node 2 forces are equilibrium-consistent.
-        # Sign convention (opsvis): axial and torsion are negated so that
-        #   positive N = tension, positive T = right-hand-rule about local x.
-        # Moments vary linearly via beam equilibrium: M(x) = -M1 + V*x*L
-        N1, Vy1, Vz1, T1, My1, Mz1 = lf[0], lf[1], lf[2], lf[3], lf[4], lf[5]
-        return {
-            "x": x,
-            "N":  [-N1] * nep,
-            "V":  [Vy1] * nep,
-            "Vz": [Vz1] * nep,
-            "T":  [-T1] * nep,
-            "My": [-My1 + Vz1 * (t * L) for t in x],
-            "Mz": [-Mz1 + Vy1 * (t * L) for t in x],
-        }
-
-    if nlf >= 6 and ndf >= 3:
-        if is_truss and ndm == 3:
-            # BUG TRAP: 3D Truss with ndf=3 also produces nlf=6 because
-            # eleResponse('localForces') returns global-frame forces for all 3
-            # translational DOFs at each node: [Fx1, Fy1, Fz1, Fx2, Fy2, Fz2].
-            # The axial force magnitude = norm of the node-1 force vector.
-            # Sign: node-1 force points away from element for tension → negative
-            # local-x component → we negate to match positive = tension convention.
-            N = math.sqrt(lf[0]**2 + lf[1]**2 + lf[2]**2)
-            # Determine sign: if the dominant component at node 1 is negative,
-            # it opposes the node1→node2 direction → element is in tension.
-            dominant = max((lf[0], lf[1], lf[2]), key=abs)
-            sign = 1.0 if dominant < 0 else -1.0
-            return {"x": x, "N": [sign * N] * nep}
-
-        # 2D frame element (e.g. elasticBeamColumn in 2D, ndf=3 = u,v,θ per node)
-        # lf = [N1, V1, M1,  N2, V2, M2]
-        # Moment varies linearly: M(x) = -M1 + V1*x*L  (beam equilibrium)
-        N1, V1, M1 = lf[0], lf[1], lf[2]
-        return {
-            "x": x,
-            "N": [-N1] * nep,
-            "V": [V1] * nep,
-            "M": [-M1 + V1 * (t * L) for t in x],
-        }
-
-    if nlf >= 2:
-        # Truss element returning only axial forces: lf = [N1, N2]
-        # Positive N = tension (opsvis convention: negate N1)
-        return {
-            "x": x,
-            "N": [-lf[0]] * nep,
-        }
-
-    # Fallback for unrecognised element types
-    return {"x": x, "N": [lf[0]] * nep} if nlf > 0 else {"x": x}
+    if etype == "elasticBeamColumn" and len(trailing) >= 2:
+        # Section form: (secTag, transfTag, ...)
+        if isinstance(trailing[0], int) and isinstance(trailing[1], int):
+            sec = sections_by_tag.get(int(trailing[0]))
+            if sec is not None:
+                return dict(sec)
+        # Inline 3D form: (A, E, G, Jxx, Iy, Iz, transfTag, ...)
+        if len(trailing) >= 7 and isinstance(trailing[6], int):
+            return {
+                "type": "Elastic",
+                "E":  float(trailing[1]),
+                "A":  float(trailing[0]),
+                "G":  float(trailing[2]),
+                "J":  float(trailing[3]),
+                "Iy": float(trailing[4]),
+                "Iz": float(trailing[5]),
+            }
+        # Inline 2D form: (A, E, Iz, transfTag, ...)
+        if len(trailing) >= 4 and isinstance(trailing[3], int):
+            return {
+                "type": "Elastic",
+                "E":  float(trailing[1]),
+                "A":  float(trailing[0]),
+                "Iz": float(trailing[2]),
+            }
+    return None
 
 
 def _restore_ops(
@@ -263,12 +260,16 @@ def _restore_ops(
     real_element: Any,
     real_fix: Any,
     real_load: Any,
+    real_uniaxialMaterial: Any,
+    real_section: Any,
 ) -> None:
-    ops.model = real_model      # type: ignore[method-assign]
-    ops.node = real_node        # type: ignore[method-assign]
-    ops.element = real_element  # type: ignore[method-assign]
-    ops.fix = real_fix          # type: ignore[method-assign]
-    ops.load = real_load        # type: ignore[method-assign]
+    ops.model = real_model                          # type: ignore[method-assign]
+    ops.node = real_node                            # type: ignore[method-assign]
+    ops.element = real_element                      # type: ignore[method-assign]
+    ops.fix = real_fix                              # type: ignore[method-assign]
+    ops.load = real_load                            # type: ignore[method-assign]
+    ops.uniaxialMaterial = real_uniaxialMaterial    # type: ignore[method-assign]
+    ops.section = real_section                      # type: ignore[method-assign]
 
 
 if __name__ == '__main__':

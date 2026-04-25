@@ -1,5 +1,6 @@
 """Entry point: injects interceptor, executes user script, prints JSON to stdout."""
 
+import ast
 import io
 import json
 import os
@@ -9,11 +10,25 @@ from typing import Any
 # Ensure this directory is on the path so interceptor can be imported
 sys.path.insert(0, os.path.dirname(__file__))
 
-from interceptor import ModelInterceptor, inject, restore
+from interceptor import InterceptorStop, ModelInterceptor, inject, restore
+
+
+def _extract_tools(filepath: str) -> list[str]:
+    try:
+        with open(filepath, encoding='utf-8') as f:
+            tree = ast.parse(f.read())
+        tools: list[str] = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.module == 'tools':
+                tools.extend(alias.name for alias in node.names)
+        return tools
+    except Exception:
+        return []
 
 
 def run(script_path: str) -> dict[str, Any]:
     """Execute user script with interceptor active. Returns model data dict."""
+    filepath = os.path.abspath(script_path)
     interceptor = ModelInterceptor()
     saved = inject(interceptor)
     error: str | None = None
@@ -21,13 +36,17 @@ def run(script_path: str) -> dict[str, Any]:
     # Suppress user stdout so it does not corrupt our JSON output
     old_stdout = sys.stdout
     sys.stdout = io.StringIO()
-    namespace: dict[str, Any] = {'__name__': '__main__', '__file__': ''}
+    script_dir = os.path.dirname(filepath)
+    if script_dir not in sys.path:
+        sys.path.insert(0, script_dir)
+
+    namespace: dict[str, Any] = {'__name__': '__main__', '__file__': filepath}
     try:
-        filepath = os.path.abspath(script_path)
-        namespace['__file__'] = filepath
         with open(filepath, 'r', encoding='utf-8') as f:
             code = f.read()
         exec(compile(code, filepath, 'exec'), namespace)
+    except InterceptorStop:
+        pass
     except Exception as exc:
         error = str(exc)
     finally:
@@ -41,6 +60,7 @@ def run(script_path: str) -> dict[str, Any]:
 
     result = interceptor.to_dict()
     result['error'] = error
+    result['tools'] = _extract_tools(filepath)
     return result
 
 

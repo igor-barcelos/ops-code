@@ -20,40 +20,41 @@ export interface NodalLoad {
     values: number[];
 }
 
-export interface NodeResult {
+export interface Responses {
+    localForce?: number[];
+}
+
+export interface ElementOutput {
+    eleTag: number;
+    type: string;
+    nodes: number[];
+    responses: Responses;
+}
+
+export interface NodeOutput {
     tag: number;
-    disp: number[];
+    coords: number[];
+    displacement: number[];
     reaction: number[];
 }
 
-export interface SectionForces {
-    x: number[];
-    N: number[];
-    V?: number[];
-    M?: number[];
-    Vz?: number[];
-    T?: number[];
-    My?: number[];
-    Mz?: number[];
+export interface ElasticSection {
+    type: 'Elastic';
+    eleTag: number;
+    E: number;
+    A: number;
+    Iz?: number;
+    Iy?: number;
+    G?: number;
+    J?: number;
 }
 
-export interface ElementResult {
-    tag: number;
-    local_forces: number[];
-    section_forces: SectionForces;
-}
+export type SectionOutput = ElasticSection;
 
-export interface CustomElemResult {
-    id: string;
-    name: string;
-    values: Record<number, number[]>;
-}
-
-export interface AnalysisData {
-    converged: boolean;
-    node_results: NodeResult[];
-    element_results: ElementResult[];
-    ops_elem_results?: CustomElemResult[];
+export interface Outputs {
+    nodes: NodeOutput[];
+    elements: ElementOutput[];
+    sections: SectionOutput[];
 }
 
 export interface Section {
@@ -94,15 +95,29 @@ export interface ModelData {
     nodal_loads: NodalLoad[];
     viewer?: Viewer;
     error: string | null;
+    tools: string[];
 }
 
 export interface AnalysisRunnerOutput extends ModelData {
-    analysis?: AnalysisData;
+    outputs?: Outputs;
+}
+
+export interface ToolElementOutput {
+    tag: number;
+    name: string;
+    value: number | string | boolean;
+    description?: string;
+}
+
+export interface ToolOutput {
+    name: string;
+    elements: ToolElementOutput[];
 }
 
 export type WebViewMessage =
     | { type: 'modelData'; data: ModelData }
-    | { type: 'analysisData'; data: AnalysisData; ndf: number }
+    | { type: 'analysisData'; data: Outputs; ndf: number }
+    | { type: 'toolUse'; data: ToolOutput[] }
     | { type: 'loading' }
     | { type: 'analysisRunning' }
     | { type: 'error'; message: string }

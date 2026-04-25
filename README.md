@@ -107,6 +107,61 @@ All fields are optional. An empty `__viewer__ = {}` or missing definition uses d
 - **Elements tab**: Click to select and view member diagrams
 - **Ctrl+S** (viewer focused): Save a screenshot of the current view
 
+## Tools
+
+Tools are Python scripts that run automatically after analysis, consuming the results and producing tabular output displayed in the panel. See `examples/pylone.py` and `examples/tools/buckling_en1993.py` for a working example.
+
+### Creating a Tool
+
+Place a `.py` file in a `tools/` folder next to your model script:
+
+```
+my_project/
+  portal_frame.py
+  tools/
+    buckling_en1993.py
+```
+
+Each tool must expose a `run(outputs)` function:
+
+```python
+def run(outputs: dict) -> dict:
+    results = []
+    for el in outputs["elements"]:
+        N = el["responses"]["localForce"][0]
+        results.append({
+            "tag": el["eleTag"],
+            "name": "N",
+            "value": round(N, 2),
+            "description": "axial force (kN)",  # optional
+        })
+    return {"elements": results}
+```
+
+ops-code exposes analysis results to tools via the `outputs` dict. Section data is only available for `Truss`, `TrussSection`, `CorotTruss`, and `elasticBeamColumn` elements.
+
+| Key | Contents |
+|---|---|
+| `nodes` | `{tag, coords, displacement, reaction}` per node |
+| `elements` | `{eleTag, type, nodes, responses: {localForce}}` per element |
+| `sections` | `{eleTag, type, E, A, Iy?, Iz?, G?, J?}` — supported element types only |
+
+### Declaring Tools in Your Model
+
+Tools are opt-in. Declare which tools apply to a model with a standard Python import:
+
+```python
+import openseespy.opensees as ops
+from tools import buckling_en1993
+```
+
+Only declared tools run — tools present in `tools/` but not imported are ignored.
+
+### Current Limitations
+
+- Tools run only after **Run Analysis** — they require analysis results
+- `forceBeamColumn` and `dispBeamColumn` section data is not resolved; those elements have no entry in `outputs["sections"]`
+
 ## Known Limitations
 
 - 2D and 3D frame elements only (truss, beam, elasticBeamColumn)

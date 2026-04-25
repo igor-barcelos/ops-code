@@ -124,6 +124,73 @@
     }
     #diagram-header button:hover { color: #fff; }
     #diagram-canvas { display: block; padding: 6px; }
+
+    #results-panel {
+      display: none;
+      position: absolute; right: 0; top: 40px; bottom: 0; width: 380px; z-index: 10;
+      background: #1e1e32; border-left: 1px solid #444466;
+      color: #e0e0e0; font-size: 11px; font-family: monospace;
+      flex-direction: column;
+    }
+    #results-panel.open { display: flex; }
+    #results-header {
+      display: flex; gap: 4px; align-items: center;
+      padding: 4px 6px; border-bottom: 1px solid #333355; background: #252540;
+      flex-shrink: 0;
+    }
+    #results-header > span { font-weight: 600; }
+    #results-tabs { display: flex; gap: 4px; flex-wrap: wrap; flex: 1; }
+    #results-header .tab-btn { font-size: 11px; padding: 2px 6px; }
+    #results-collapse-btn {
+      background: none; border: none; color: #aaa; font-size: 13px;
+      cursor: pointer; padding: 0 2px;
+    }
+    #results-collapse-btn:hover { color: #fff; }
+
+    #results-elements {
+      display: flex; gap: 6px; align-items: center;
+      padding: 6px 8px;
+      border-bottom: 1px solid #333355; background: #222238;
+      flex-shrink: 0;
+    }
+    #results-elements label { color: #aaa; }
+    #results-element-select {
+      flex: 1;
+      background: #2a2a3e; color: #e0e0e0; border: 1px solid #444466;
+      padding: 3px 6px; border-radius: 3px; font-size: 11px; font-family: monospace;
+      cursor: pointer;
+    }
+
+    #results-body { overflow-y: auto; flex: 1; }
+    #results-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+    #results-table col.col-name  { width: 60px; }
+    #results-table col.col-value { width: 90px; }
+    #results-table th {
+      position: sticky; top: 0; background: #252540;
+      padding: 3px 6px; text-align: left; border-bottom: 1px solid #444466;
+      font-weight: 600; white-space: nowrap;
+    }
+    #results-table th.col-value { text-align: right; }
+    #results-table td {
+      padding: 3px 6px; text-align: left; border-bottom: 1px solid #2a2a44;
+      vertical-align: top;
+    }
+    #results-table td.col-name  { white-space: nowrap; }
+    #results-table td.col-value { text-align: right; white-space: nowrap; }
+    #results-table td.col-desc  { white-space: normal; color: #aaa; }
+    #results-table tr:nth-child(even) td { background: #222238; }
+    #results-table tr:hover td { background: #333355; }
+
+    #results-open-btn {
+      display: none;
+      position: absolute; right: 0; top: 50%; transform: translateY(-50%); z-index: 11;
+      background: #252540; border: 1px solid #444466; border-right: none;
+      color: #aaa; font-size: 12px; cursor: pointer;
+      padding: 10px 4px; border-radius: 3px 0 0 3px; writing-mode: vertical-rl;
+    }
+    #results-open-btn:hover { color: #fff; background: #333355; }
+
+    body.results-open #colorbar { right: 396px; }
   </style>
 </head>
 <body>
@@ -175,6 +242,31 @@
       <button id="diagram-close">&times;</button>
     </div>
     <canvas id="diagram-canvas"></canvas>
+  </div>
+
+  <button id="results-open-btn" title="Open Results panel">&#9664; Results</button>
+
+  <div id="results-panel">
+    <div id="results-header">
+      <span>Results</span>
+      <div id="results-tabs"></div>
+      <button id="results-collapse-btn" title="Collapse">&#9654;</button>
+    </div>
+    <div id="results-elements">
+      <label for="results-element-select">Element</label>
+      <select id="results-element-select"></select>
+    </div>
+    <div id="results-body">
+      <table id="results-table">
+        <colgroup>
+          <col class="col-name">
+          <col class="col-value">
+          <col class="col-desc">
+        </colgroup>
+        <thead id="results-thead"></thead>
+        <tbody id="results-tbody"></tbody>
+      </table>
+    </div>
   </div>
 
   <div id="error-banner"></div>
