@@ -6,7 +6,7 @@
 
 Run openseespy models directly in VS Code with instant 3D visualization and interactive analysis results.
 
-![ops-code demo](assets/demo_3.gif)
+![ops-code demo](assets/demo_4.gif)
 
 ## Quick Start
 
@@ -122,7 +122,14 @@ my_project/
     buckling_en1993.py
 ```
 
-Each tool must expose a `run(outputs)` function:
+Each tool must expose a `run(outputs)` function that returns `{"elements": [...]}`. Each entry in the list must follow this exact shape:
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `tag` | `int` | yes | element tag |
+| `name` | `str` | yes | result label |
+| `value` | `int \| float \| str \| bool` | yes | result value |
+| `description` | `str` | no | longer description shown in panel |
 
 ```python
 def run(outputs: dict) -> dict:
@@ -130,10 +137,10 @@ def run(outputs: dict) -> dict:
     for el in outputs["elements"]:
         N = el["responses"]["localForce"][0]
         results.append({
-            "tag": el["eleTag"],
-            "name": "N",
-            "value": round(N, 2),
-            "description": "axial force (kN)",  # optional
+            "tag": el["eleTag"],          # int — element tag
+            "name": "N",                  # str — result label
+            "value": round(N, 2),         # int | float | str | bool
+            "description": "axial force (kN)",  # str — optional
         })
     return {"elements": results}
 ```
